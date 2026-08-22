@@ -36,6 +36,7 @@ const ICONS = {
   eyeOff:'<path d="M17.9 17.9A10.5 10.5 0 0 1 12 20c-7 0-11-8-11-8a19.7 19.7 0 0 1 5-6.1M9.9 4.2A9.9 9.9 0 0 1 12 4c7 0 11 8 11 8a19.9 19.9 0 0 1-3.2 4.4"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/>',
   shield:'<path d="M12 2 4 5v6c0 5.2 3.4 9.9 8 11 4.6-1.1 8-5.8 8-11V5z"/><path d="M9 12l2 2 4-4.5"/>',
   down:'<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  up:'<path d="M12 19V5M5 12l7-7 7 7"/>',
   filter:'<path d="M4 5h16M7 12h10M10 19h4"/>',
   device:'<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
   check:'<path d="M20 6 9 17l-5-5"/>',
@@ -1379,7 +1380,7 @@ RENDERERS.dashboard = function(c){
 function kpiCard(iconName, color, value, label, trend, dir){
   return `<div class="kpi-card">
     <div class="top"><div class="kpi-icon" style="background:${color}">${icon(iconName)}</div>
-    <div class="kpi-trend ${dir}">${icon(dir==='up'?'down':'down')} ${trend}</div></div>
+    <div class="kpi-trend ${dir}">${icon(dir==='up'?'up':'down')} ${trend}</div></div>
     <div class="kpi-value">${value}</div><div class="kpi-label">${label}</div></div>`;
 }
 function drawRevenueChart(){

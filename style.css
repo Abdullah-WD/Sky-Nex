@@ -160,7 +160,7 @@ input,select,textarea{font-family:inherit; font-size:inherit; color:inherit;}
   gap:16px; padding:0 26px; position:sticky; top:0; z-index:40; backdrop-filter:blur(8px);
 }
 .menu-toggle{display:none; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:8px; color:var(--text);}
-.page-heading{display:flex; flex-direction:column; margin-right:auto;}
+.page-heading{display:flex; flex-direction:column; margin-right:auto; min-width:0;}
 .page-heading h1{font-size:19px; font-weight:700;}
 .page-heading .sub{font-size:12px; color:var(--text-muted); margin-top:1px;}
 .search-box{
@@ -398,6 +398,8 @@ tbody tr:hover{background:var(--surface-2);}
 .rating-note{font-size:11.5px; color:var(--text-faint);}
 
 .chart-wrap{position:relative;}
+#revChart{width:100%; max-width:100%; display:block;}
+.card-body canvas{max-width:100%;}
 .donut-center{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;}
 .donut-center b{display:block; font-family:var(--font-display); font-size:20px;}
 .donut-center span{font-size:10.5px; color:var(--text-muted);}
