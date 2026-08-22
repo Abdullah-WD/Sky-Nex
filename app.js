@@ -62,7 +62,8 @@ const NAV = [
     {id:'lowstock', label:'Low Stock', icon:'alert', badgeKey:'lowStockCount'},
   ]},
   {group:'Purchasing', items:[
-    {id:'suppliers', label:'Suppliers & Ledger', icon:'truck'},
+    {id:'suppliers', label:'Suppliers', icon:'truck'},
+    {id:'ledger', label:'Ledger', icon:'file'},
   ]},
   {group:'Sales', items:[
     {id:'sales', label:'Sell Accessories', icon:'cart'},
@@ -94,7 +95,8 @@ const PAGE_META = {
   products:['Stock Items','Manage the parts, accessories & devices you stock.'],
   categories:['Categories','Organize stock items and repair types into groups.'],
   lowstock:['Low Stock','Items that have fallen below their reorder threshold.'],
-  suppliers:['Suppliers & Ledger','Manage suppliers, track purchases and outstanding payables.'],
+  suppliers:['Suppliers','Manage your supplier directory and contact details.'],
+  ledger:['Ledger','Record purchases against a supplier, track payments and outstanding payables.'],
   sales:['Sell Accessories','Sell stock items & accessories directly to a walk-in or existing customer.'],
   orders:['Repair','Track repair jobs from intake to delivery.'],
   expenses:['Expense','Log workshop expenses and running costs.'],
@@ -450,7 +452,7 @@ function activeRepairs(){ return DB.orders.filter(o=>o.status!=='Completed' && o
 
 /* ---------- Router ---------- */
 let currentRoute = 'dashboard';
-let suppliersTab = 'suppliers';
+let ledgerTab = 'ledger';
 function route(){
   const hash = (location.hash||'#dashboard').replace('#','');
   let target = PAGE_META[hash] ? hash : 'dashboard';
@@ -1466,13 +1468,43 @@ RENDERERS.products = function(c){
   });
 };
 
-/* ---- SUPPLIERS & LEDGER ---- */
+/* ---- SUPPLIERS ---- */
+// Supplier directory only — a supplier is its own entity (name, contact,
+// address) separate from the money side of the relationship, which lives
+// on the Ledger page below. Kept as its own top-level nav item rather than
+// a tab so it reads as a distinct record type, not a view of the ledger.
 RENDERERS.suppliers = function(c){
   function draw(){
     try{
       // Defensive: guard against any pre-existing/imported data that's missing
       // these arrays or has malformed rows, so a bad record can't blank the
       // whole page — sanitize before anything reads from them below.
+      if(!Array.isArray(DB.suppliers)) DB.suppliers = [];
+      if(!Array.isArray(DB.purchases)) DB.purchases = [];
+      DB.suppliers = DB.suppliers.filter(s=>s && s.id);
+      DB.purchases = DB.purchases.filter(p=>p && p.id).map(p=>{ if(!Array.isArray(p.items)) p.items = []; return p; });
+      renderSuppliersListTab(c);
+    }catch(err){
+      console.error('Suppliers page failed to render:', err);
+      c.innerHTML = `<div class="empty-state">
+        <div class="icon-wrap">${icon('alert')}</div>
+        <h4>This page didn't load correctly</h4>
+        <p>Please reload the page (Ctrl/Cmd+Shift+R for a hard refresh). If it keeps happening, contact your administrator.</p>
+        <button class="btn btn-outline" onclick="location.reload()">${icon('clock')} Reload Page</button>
+      </div>`;
+    }
+  }
+  draw();
+};
+
+/* ---- LEDGER (Purchases) ---- */
+// The money side: purchase bills against suppliers, payments and balances.
+// Separate from the Suppliers directory above, since a supplier record and
+// a ledger/purchase record are different entities that shouldn't live on
+// one combined page.
+RENDERERS.ledger = function(c){
+  function draw(){
+    try{
       if(!Array.isArray(DB.suppliers)) DB.suppliers = [];
       if(!Array.isArray(DB.purchases)) DB.purchases = [];
       DB.suppliers = DB.suppliers.filter(s=>s && s.id);
@@ -1484,20 +1516,18 @@ RENDERERS.suppliers = function(c){
           ${kpiCard('wallet','var(--red)', fmtMoney(payable), 'Total Payable to Suppliers', DB.suppliers.length+' supplier(s)', payable>0?'down':'up')}
           ${kpiCard('alert','var(--orange)', dueCount, 'Purchases With Balance Due', dueCount>0?'Needs settlement':'All settled', dueCount>0?'down':'up')}
         </div>
-        <div class="subtabs" id="supplierSubtabs">
-          <button type="button" class="subtab-btn ${suppliersTab==='suppliers'?'active':''}" data-tab="suppliers">${icon('users')} Suppliers</button>
-          <button type="button" class="subtab-btn ${suppliersTab==='ledger'?'active':''}" data-tab="ledger">${icon('file')} Supplier Ledger (Purchases)</button>
-          <button type="button" class="subtab-btn ${suppliersTab==='newpurchase'?'active':''}" data-tab="newpurchase">${icon('cart')} New Purchase (Cart)</button>
+        <div class="subtabs" id="ledgerSubtabs">
+          <button type="button" class="subtab-btn ${ledgerTab==='ledger'?'active':''}" data-tab="ledger">${icon('file')} Supplier Ledger (Purchases)</button>
+          <button type="button" class="subtab-btn ${ledgerTab==='newpurchase'?'active':''}" data-tab="newpurchase">${icon('cart')} New Purchase (Cart)</button>
         </div>
-        <div id="supplierTabBody"></div>
+        <div id="ledgerTabBody"></div>
       `;
-      c.querySelectorAll('.subtab-btn').forEach(b=>{ b.onclick = ()=>{ suppliersTab = b.dataset.tab; draw(); }; });
-      const body = c.querySelector('#supplierTabBody');
-      if(suppliersTab==='ledger') renderSupplierLedgerTab(body);
-      else if(suppliersTab==='newpurchase') renderNewPurchaseTab(body);
-      else renderSuppliersListTab(body);
+      c.querySelectorAll('.subtab-btn').forEach(b=>{ b.onclick = ()=>{ ledgerTab = b.dataset.tab; draw(); }; });
+      const body = c.querySelector('#ledgerTabBody');
+      if(ledgerTab==='newpurchase') renderNewPurchaseTab(body);
+      else renderSupplierLedgerTab(body);
     }catch(err){
-      console.error('Suppliers & Ledger page failed to render:', err);
+      console.error('Ledger page failed to render:', err);
       c.innerHTML = `<div class="empty-state">
         <div class="icon-wrap">${icon('alert')}</div>
         <h4>This page didn't load correctly</h4>
@@ -1667,8 +1697,8 @@ function renderNewPurchaseTab(container){
       save();
       toast('Purchase recorded successfully');
       cart = [];
-      suppliersTab = 'ledger';
-      RENDERERS.suppliers(document.getElementById('content'));
+      ledgerTab = 'ledger';
+      RENDERERS.ledger(document.getElementById('content'));
     };
   }
   draw();
@@ -2044,23 +2074,29 @@ function printRepairReceipt(order){
     </div>`;
   printAreaWhenReady();
 }
-// Prints a small sticker label for the physical device — Customer Name +
-// Tracking ID only — meant to be stuck on the device at intake, using a
-// thermal label printer. Separate from the full A5 invoice: it swaps in a
-// temporary @page size (forced landscape, since the label roll is wider
-// than it is tall) just for this one print job, removed again right after,
-// so it doesn't disturb normal invoice printing.
+// Prints a small sticker label for the physical device — Tracking#, Name,
+// Phone, Fault and (if available) Date — meant to be stuck on the device
+// at intake, using a thermal label printer. Separate from the full A5
+// invoice: it swaps in a temporary @page size just for this one print job,
+// removed again right after, so it doesn't disturb normal invoice printing.
 // To change the label roll size later, just edit LABEL_SIZE_IN below.
 // If the printout ever comes out sideways again, flip ROTATE_LABEL to true.
 function printDeviceLabel(order){
-  const LABEL_SIZE_IN = { width: 2, height: 1 }; // sticker size in inches
+  const LABEL_SIZE_IN = { width: 3, height: 3 }; // sticker size in inches
   const ROTATE_LABEL = false; // set true only if the printer still rotates it 90°
+  const cust = DB.customers.find(x=>x.id===order.customer) || {};
   const name = custName(order.customer) || 'Walk-in Customer';
   const track = order.trackingId || '—';
+  const phone = order.customerPhone || cust.phone || '';
+  const fault = joinDeviceField(order.devices||[], 'issue');
+  const dateStr = order.date ? fmtDate(order.date) : ''; // optional — skipped if not available
   document.getElementById('printLabelArea').innerHTML = `
     <div class="label-sheet" style="width:${LABEL_SIZE_IN.width}in;height:${LABEL_SIZE_IN.height}in;${ROTATE_LABEL?'transform:rotate(90deg);':''}">
-      <div class="lbl-name">${escapeHtml(name)}</div>
-      <div class="lbl-track">#${escapeHtml(track)}</div>
+      <div class="lbl-row"><span class="lbl-key">Tracking #</span><span class="lbl-val lbl-track">${escapeHtml(track)}</span></div>
+      <div class="lbl-row"><span class="lbl-key">Name</span><span class="lbl-val">${escapeHtml(name)}</span></div>
+      ${phone ? `<div class="lbl-row"><span class="lbl-key">Number</span><span class="lbl-val">${escapeHtml(phone)}</span></div>` : ''}
+      <div class="lbl-row lbl-row-fault"><span class="lbl-key">Fault</span><span class="lbl-val">${escapeHtml(fault||'—')}</span></div>
+      ${dateStr ? `<div class="lbl-row"><span class="lbl-key">Date</span><span class="lbl-val">${escapeHtml(dateStr)}</span></div>` : ''}
       <div class="lbl-biz">${escapeHtml(DB.settings.businessName||'Sky Nex')}</div>
     </div>`;
   const pageStyle = document.createElement('style');
