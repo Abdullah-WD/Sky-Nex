@@ -2041,26 +2041,8 @@ function printRepairReceipt(order){
         <span style="display:flex;align-items:center;gap:4px">${invIcon('phone','#8B2FE0')} ${escapeHtml(DB.settings.phone)}</span>
         <span style="font-weight:700;color:#B4B4C4;letter-spacing:.4px">SKY NEX • MOBILE REPAIR WORKSHOP &amp; INSTITUTE</span>
       </div>
-
-      ${deviceStickerBlock(custName(order.customer), order.trackingId)}
     </div>`;
   printAreaWhenReady();
-}
-// Small "cut here" sticker box printed at the bottom of the repair invoice —
-// Customer Name + Tracking ID only — meant to be cut out and stuck on the
-// device during intake. Prints automatically every time the invoice prints,
-// no extra click needed. Size is set with LABEL_W/LABEL_H below (inches);
-// change those two numbers if the sticker needs to be a different size.
-function deviceStickerBlock(name, trackingId){
-  const LABEL_W = 2, LABEL_H = 1; // sticker size in inches
-  return `
-    <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #B4B4C4">
-      <div style="text-align:center;font-size:7px;color:#999;letter-spacing:.4px;margin-bottom:5px">✂ CUT HERE — DEVICE STICKER</div>
-      <div style="width:${LABEL_W}in;height:${LABEL_H}in;margin:0 auto;box-sizing:border-box;border:1px dashed #B4B4C4;border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4px;overflow:hidden">
-        <div style="font-size:11pt;font-weight:800;color:#1a1a2e;line-height:1.15;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(name||'Walk-in Customer')}</div>
-        <div style="font-size:10pt;font-weight:700;font-family:'Courier New',monospace;letter-spacing:.5px;color:#1a1a2e;margin-top:3px">#${escapeHtml(trackingId||'—')}</div>
-      </div>
-    </div>`;
 }
 // Prints a small sticker label for the physical device — Customer Name +
 // Tracking ID only — meant to be stuck on the device at intake, using a
