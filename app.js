@@ -1556,13 +1556,18 @@ function renderSuppliersListTab(container){
     fields:[
       {key:'name', label:'Supplier Name', full:true},
       {key:'company', label:'Company Name'},
-      {key:'phone', label:'Phone'},
+      {key:'phone', label:'Phone', placeholder:'03XX-XXXXXXX'},
       {key:'city', label:'City'},
       {key:'contactPerson', label:'Contact Person'},
       {key:'address', label:'Address', full:true},
       {key:'notes', label:'Notes', type:'textarea', full:true},
     ],
-    validate:d=> !String(d.name||'').trim() ? 'Supplier name is required' : null,
+    validate:d=>{
+      if(!String(d.name||'').trim()) return 'Supplier name is required';
+      if(String(d.phone||'').trim() && !pkPhoneValid(d.phone)) return 'Enter a valid phone number as 0300-1234567 (4 digits, dash, 7 digits)';
+      return null;
+    },
+    afterRender:()=> bindPhoneMask('f_phone'),
     canDelete:s=> !DB.purchases.some(p=>p.supplier===s.id),
     canDeleteMsg:'Cannot delete a supplier with purchase records — remove their ledger entries first.',
   });
@@ -2082,7 +2087,7 @@ function printRepairReceipt(order){
 // To change the label roll size later, just edit LABEL_SIZE_IN below.
 // If the printout ever comes out sideways again, flip ROTATE_LABEL to true.
 function printDeviceLabel(order){
-  const LABEL_SIZE_IN = { width: 3, height: 3 }; // sticker size in inches
+  const LABEL_SIZE_IN = { width: 3, height: 2 }; // sticker size in inches
   const ROTATE_LABEL = false; // set true only if the printer still rotates it 90°
   const cust = DB.customers.find(x=>x.id===order.customer) || {};
   const name = custName(order.customer) || 'Walk-in Customer';
