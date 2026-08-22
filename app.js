@@ -44,7 +44,9 @@ const ICONS = {
   image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
   download:'<path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
   upload:'<path d="M12 21V9m0 0-4.5 4.5M12 9l4.5 4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
-  pin:'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>'
+  pin:'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  signature:'<path d="M3 16c1.5-3.5 3-5.5 4.3-5.5 1.6 0 1.7 4.5 3.3 4.5 1.8 0 2.4-6.5 4.2-6.5 1.5 0 1.7 4 3 4.3.9.2 1.9-.7 3.2-2.3"/><path d="M3 20.5h18"/>',
+  truck:'<rect x="1" y="6" width="14" height="11" rx="1"/><path d="M15 9h4l3 4v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17.5" cy="19" r="2"/>'
 };
 function icon(name, cls){ return `<svg class="icon ${cls||''}" viewBox="0 0 24 24">${ICONS[name]||''}</svg>`; }
 
@@ -57,6 +59,9 @@ const NAV = [
     {id:'products', label:'Stock Items', icon:'box'},
     {id:'categories', label:'Categories', icon:'tag'},
     {id:'lowstock', label:'Low Stock', icon:'alert', badgeKey:'lowStockCount'},
+  ]},
+  {group:'Purchasing', items:[
+    {id:'suppliers', label:'Suppliers & Ledger', icon:'truck'},
   ]},
   {group:'Sales', items:[
     {id:'sales', label:'Sell Accessories', icon:'cart'},
@@ -88,6 +93,7 @@ const PAGE_META = {
   products:['Stock Items','Manage the parts, accessories & devices you stock.'],
   categories:['Categories','Organize stock items and repair types into groups.'],
   lowstock:['Low Stock','Items that have fallen below their reorder threshold.'],
+  suppliers:['Suppliers & Ledger','Manage suppliers, track purchases and outstanding payables.'],
   sales:['Sell Accessories','Sell stock items & accessories directly to a walk-in or existing customer.'],
   orders:['Repair','Track repair jobs from intake to delivery.'],
   expenses:['Expense','Log workshop expenses and running costs.'],
@@ -145,6 +151,8 @@ function seedData(){
   ];
   const products = [];
   const customers = [];
+  const suppliers = [];
+  const purchases = [];
   const users = [
     {id:uid('USR'), name:'Admin User', username:'admin', password:'admin123', role:'Administrator', email:'', phone:'', status:'Active'},
   ];
@@ -174,7 +182,7 @@ function seedData(){
       {id:uid('ROL'), name:'Cashier', level:'manager', modules:['dashboard','sales','orders','expenses','customers']},
       {id:uid('ROL'), name:'Viewer', level:'viewer', modules:['dashboard','sales','orders','customers','reports']},
     ],
-    categories, products, customers, users, repairs, orders, sales, invoices, expenses, history, requests:[], schemaVersion:SEED_VERSION
+    categories, products, customers, suppliers, purchases, users, repairs, orders, sales, invoices, expenses, history, requests:[], schemaVersion:SEED_VERSION
   };
 }
 /* ---------- Username helpers ---------- */
@@ -234,6 +242,8 @@ function loadDB(){
   Object.keys(defaults).forEach(k=>{ if(!d.lists[k]){ d.lists[k] = defaults[k]; migrated = true; } });
   if(!Array.isArray(d.requests)){ d.requests = []; migrated = true; }
   if(!Array.isArray(d.sales)){ d.sales = []; migrated = true; }
+  if(!Array.isArray(d.suppliers)){ d.suppliers = []; migrated = true; }
+  if(!Array.isArray(d.purchases)){ d.purchases = []; migrated = true; }
   if(!Array.isArray(d.roles) || !d.roles.length){ d.roles = seedData().roles; migrated = true; }
   if(Array.isArray(d.users)){
     d.users.forEach(u=>{
@@ -347,11 +357,99 @@ const custName = v => DB.customers.find(c=>c.id===v)?.name || v || '—';
 const userName = id => DB.users.find(u=>u.id===id)?.name || '—';
 const prodName = id => DB.products.find(p=>p.id===id)?.name || '—';
 const catName = id => DB.categories.find(c=>c.id===id)?.name || '—';
+const supplierName = id => DB.suppliers.find(s=>s.id===id)?.name || id || '—';
 function lowStockItems(){ return DB.products.filter(p=>Number(p.stock) <= Number(p.threshold)); }
+/* ---- Supplier / Purchase ledger helpers ---- */
+function purchaseBalance(p){ return Math.max(0, Number(p.total||0) - Number(p.paid||0)); }
+function purchaseStatus(p){
+  const bal = purchaseBalance(p);
+  if(bal<=0 && Number(p.total||0)>0) return 'Paid';
+  if(Number(p.paid||0)>0) return 'Partial';
+  return 'Unpaid';
+}
+function totalPayableToSuppliers(){ return DB.purchases.reduce((sum,p)=> sum + purchaseBalance(p), 0); }
+function purchasesWithBalanceDueCount(){ return DB.purchases.filter(p=> purchaseBalance(p) > 0).length; }
+function supplierPayable(id){ return DB.purchases.filter(p=>p.supplier===id).reduce((sum,p)=> sum + purchaseBalance(p), 0); }
+function purchaseItemsSummary(p){
+  const list = (p.items||[]).filter(it=>it.product);
+  if(!list.length) return '—';
+  const first = `${prodName(list[0].product)} × ${Number(list[0].qty)||0}`;
+  return list.length===1 ? escapeHtml(first) : `${escapeHtml(first)} <span class="cell-muted">+${list.length-1} more</span>`;
+}
+function purchaseComputedTotal(items){
+  return (items||[]).reduce((s,it)=> s + (Number(it.qty)||0)*(Number(it.cost)||0), 0);
+}
+// Adds stock for a newly recorded purchase, or reconciles stock when an
+// existing purchase's items are edited (restores the old quantities first,
+// then adds the new ones). Also refreshes each product's cost price to the
+// latest buying price, so it stays accurate the next time it's checked.
+function reconcilePurchaseStock(purchase, prevSnapshot){
+  if(prevSnapshot && prevSnapshot._stockAdded){
+    (prevSnapshot._addedItems||[]).forEach(it=>{
+      const prod = DB.products.find(p=>p.id===it.product);
+      if(prod) prod.stock = Math.max(0, Number(prod.stock) - Number(it.qty));
+    });
+  }
+  const items = (purchase.items||[]).filter(it=>it.product && Number(it.qty)>0);
+  items.forEach(it=>{
+    const prod = DB.products.find(p=>p.id===it.product);
+    if(!prod) return;
+    prod.stock = Number(prod.stock||0) + Number(it.qty);
+    if(it.cost!=='' && it.cost!=null && !isNaN(Number(it.cost))) prod.cost = Number(it.cost);
+  });
+  purchase._stockAdded = true;
+  purchase._addedItems = items.map(it=>({product:it.product, qty:Number(it.qty)}));
+  log(`Stock updated from purchase ${purchase.id}`, 'purchases', {kind:'stock-in'});
+}
+// Restores stock when a purchase record is deleted outright.
+function restorePurchaseStock(purchase){
+  if(!purchase || !purchase._stockAdded) return;
+  (purchase._addedItems||[]).forEach(it=>{
+    const prod = DB.products.find(p=>p.id===it.product);
+    if(prod) prod.stock = Math.max(0, Number(prod.stock) - Number(it.qty));
+  });
+  log(`Stock reversed — purchase ${purchase.id} deleted`, 'purchases', {kind:'stock-out'});
+}
+// Live-updates the Total field in the purchase form as items/qty/cost change,
+// and auto-fills a line's Buying Price from the product's current cost when picked.
+function bindPurchaseLiveTotal(){
+  const list = document.getElementById('f_items_list');
+  const totalEl = document.getElementById('f_total');
+  if(!list || !totalEl) return;
+  function recalc(){
+    const rows = Array.from(list.children).map(b=>({
+      qty: Number((b.querySelector('[data-key="qty"]')||{}).value||0),
+      cost: Number((b.querySelector('[data-key="cost"]')||{}).value||0),
+    }));
+    totalEl.value = purchaseComputedTotal(rows);
+  }
+  function bindRow(block){
+    const prodSel = block.querySelector('[data-key="product"]');
+    const costInput = block.querySelector('[data-key="cost"]');
+    const qtyInput = block.querySelector('[data-key="qty"]');
+    if(prodSel) prodSel.addEventListener('change', ()=>{
+      const prod = DB.products.find(p=>p.id===prodSel.value);
+      if(prod && costInput && !costInput.value) costInput.value = prod.cost;
+      recalc();
+    });
+    if(costInput) costInput.addEventListener('input', recalc);
+    if(qtyInput) qtyInput.addEventListener('input', recalc);
+  }
+  Array.from(list.children).forEach(bindRow);
+  const addBtn = document.getElementById('f_items_addbtn');
+  if(addBtn) addBtn.addEventListener('click', ()=> setTimeout(()=>{
+    const last = list.children[list.children.length-1];
+    if(last) bindRow(last);
+    recalc();
+  }, 0));
+  list.querySelectorAll('.device-remove').forEach(btn=> btn.addEventListener('click', ()=> setTimeout(recalc, 0)));
+  recalc();
+}
 function activeRepairs(){ return DB.orders.filter(o=>o.status!=='Completed' && o.status!=='Cancelled'); }
 
 /* ---------- Router ---------- */
 let currentRoute = 'dashboard';
+let suppliersTab = 'suppliers';
 function route(){
   const hash = (location.hash||'#dashboard').replace('#','');
   let target = PAGE_META[hash] ? hash : 'dashboard';
@@ -768,6 +866,122 @@ function bindWebcamField(f){
     bindWebcamField(f);
   };
 }
+// Triggers window.print() only after every image inside #printArea (logo +
+// customer signature) has actually finished loading/decoding. Calling
+// window.print() right after setting innerHTML can snapshot the page before
+// a freshly-inserted base64 signature image has painted, so it prints blank
+// — waiting for each image's load/error event (or img.decode()) avoids that.
+function printAreaWhenReady(){
+  const area = document.getElementById('printArea');
+  const imgs = Array.from(area.querySelectorAll('img'));
+  const pending = imgs.filter(img => !img.complete || img.naturalWidth === 0);
+  if(!pending.length){ window.print(); return; }
+  let remaining = pending.length;
+  const proceed = ()=>{ remaining--; if(remaining<=0) window.print(); };
+  pending.forEach(img=>{
+    img.addEventListener('load', proceed, {once:true});
+    img.addEventListener('error', proceed, {once:true});
+  });
+  // Safety net in case an image never fires load/error for some reason.
+  setTimeout(()=>{ if(remaining>0){ remaining = 0; window.print(); } }, 1200);
+}
+
+/* ---------- Customer e-signature capture (used on Sales, Repairs & Invoices) ----------
+   Draws to a canvas (mouse, trackpad or touchscreen), stores the result as a
+   base64 PNG on the record itself (item.signature / item.signatureDate) so it
+   can be reprinted on the invoice at any time without asking the customer to
+   sign again. */
+function setupSignatureCanvas(canvas, existingDataUrl){
+  const ratio = Math.max(window.devicePixelRatio || 1, 1);
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width || 500, cssH = rect.height || 190;
+  canvas.width = Math.round(cssW * ratio);
+  canvas.height = Math.round(cssH * ratio);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a1a2e';
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cssW, cssH);
+  let hasStroke = false;
+  if(existingDataUrl){
+    const img = new Image();
+    img.onload = ()=> ctx.drawImage(img, 0, 0, cssW, cssH);
+    img.src = existingDataUrl;
+  }
+  let drawing = false, lastX = 0, lastY = 0;
+  function posOf(e){
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches && e.touches[0];
+    return { x: (t ? t.clientX : e.clientX) - r.left, y: (t ? t.clientY : e.clientY) - r.top };
+  }
+  function start(e){ e.preventDefault(); drawing = true; const p = posOf(e); lastX = p.x; lastY = p.y; }
+  function move(e){
+    if(!drawing) return;
+    e.preventDefault();
+    const p = posOf(e);
+    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
+    lastX = p.x; lastY = p.y; hasStroke = true;
+  }
+  function stop(){ drawing = false; }
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  canvas.addEventListener('mouseup', stop);
+  canvas.addEventListener('mouseleave', stop);
+  canvas.addEventListener('touchstart', start, {passive:false});
+  canvas.addEventListener('touchmove', move, {passive:false});
+  canvas.addEventListener('touchend', stop);
+  return {
+    clear(){ ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cssW, cssH); hasStroke = false; },
+    isEmpty(){ return !hasStroke && !existingDataUrl; },
+    toDataURL(){ return canvas.toDataURL('image/png'); }
+  };
+}
+// Opens the "capture customer signature" modal for any record (sale, repair
+// order or invoice). onSaved(item) is called after the signature is stored
+// so the calling page can refresh its rows.
+function openSignatureModal(item, label, onSaved){
+  openModal(
+    (item.signature ? 'Update' : 'Capture') + ' Customer Signature',
+    `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px">Hand the device to <b style="color:var(--text)">${escapeHtml(label||item.id)}</b> and ask them to sign below to acknowledge this ${item.total!==undefined?'sale':(item.faultReported!==undefined||item.notes!==undefined?'repair/invoice':'record')}.</p>
+     <div style="border:1.5px dashed var(--border);border-radius:10px;overflow:hidden;background:#fff">
+       <canvas id="sigPadCanvas" style="width:100%;height:190px;display:block;touch-action:none;cursor:crosshair"></canvas>
+     </div>
+     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px">
+       <span style="font-size:11px;color:var(--text-muted)">${item.signature ? 'Currently signed'+(item.signatureDate?' on '+fmtDate(item.signatureDate):'') : 'No signature on file yet'}</span>
+       <button type="button" class="btn btn-outline btn-sm" id="sigClearBtn">${icon('trash')} Clear</button>
+     </div>`,
+    `<button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" id="sigSaveBtn">${icon('check')} Save Signature</button>`
+  );
+  const canvas = document.getElementById('sigPadCanvas');
+  const pad = setupSignatureCanvas(canvas, item.signature || '');
+  document.getElementById('sigClearBtn').onclick = ()=> pad.clear();
+  document.getElementById('sigSaveBtn').onclick = ()=>{
+    if(pad.isEmpty()){ toast('Please sign in the box before saving', 'error'); return; }
+    item.signature = pad.toDataURL();
+    item.signatureDate = todayStr();
+    save();
+    log(`Customer signature captured for ${item.id}`, 'signature');
+    closeModal();
+    toast('Signature saved');
+    if(onSaved) onSaved(item);
+  };
+}
+// Bottom-of-invoice signature strip: shows the captured signature image if
+// present, otherwise a blank line for an on-paper signature as a fallback.
+function invSignatureBox(item){
+  return `<div style="border:1px solid #E7E5F3;border-radius:8px;padding:8px 12px;margin-top:9px;display:flex;align-items:center;gap:12px">
+    <div style="flex:1">
+      <div style="font-size:7.6px;font-weight:800;color:#8B2FE0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Customer Signature</div>
+      ${item.signature
+        ? `<img src="${item.signature}" alt="Customer signature" style="height:34px;max-width:100%;object-fit:contain">`
+        : `<div style="height:1px;background:#1a1a2e;margin-top:22px;max-width:210px"></div>`}
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:7.6px;font-weight:800;color:#8B2FE0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Date</div>
+      <div style="font-size:10px;font-weight:700;min-width:60px">${item.signature && item.signatureDate ? fmtDate(item.signatureDate) : '—'}</div>
+    </div>
+  </div>`;
+}
 function collectFields(fields){
   const out = {};
   fields.forEach(f=>{
@@ -904,13 +1118,15 @@ function crudPage(container, opts){
   function renderTableInner(rows){
     return rows.length===0 ? emptyState(opts.title) : `
       <table>
-        <thead><tr>${opts.columns.map(c=>`<th>${c.label}</th>`).join('')}${(opts.viewFn||opts.enableViewDetail||!readOnly)?'<th style="text-align:right">Actions</th>':''}</tr></thead>
+        <thead><tr>${opts.columns.map(c=>`<th>${c.label}</th>`).join('')}${(opts.viewFn||opts.labelFn||opts.enableViewDetail||opts.enableSignature||!readOnly)?'<th style="text-align:right">Actions</th>':''}</tr></thead>
         <tbody>${rows.map(r=>{
           const delAllowed = !opts.canDelete || opts.canDelete(r);
           return `<tr>${opts.columns.map(c=>`<td>${c.render(r)}</td>`).join('')}
-          ${(opts.viewFn||opts.enableViewDetail||!readOnly)?`<td><div class="row-actions">
+          ${(opts.viewFn||opts.labelFn||opts.enableViewDetail||opts.enableSignature||!readOnly)?`<td><div class="row-actions">
             ${opts.enableViewDetail?`<button class="mini-btn" data-detail="${r.id}" title="View" aria-label="View record details">${icon('eye')}</button>`:''}
             ${opts.viewFn?`<button class="mini-btn${opts.viewLabel?' mini-btn-text':''}" data-view="${r.id}" title="${escapeHtml(opts.viewLabel||'View')}" aria-label="${escapeHtml(opts.viewLabel||'View record')}">${opts.viewLabel?escapeHtml(opts.viewLabel):icon('file')}</button>`:''}
+            ${opts.labelFn?`<button class="mini-btn${opts.labelLabel?' mini-btn-text':''}" data-label="${r.id}" title="${escapeHtml(opts.labelLabel||'Sticker')}" aria-label="${escapeHtml(opts.labelLabel||'Print device sticker')}">${opts.labelLabel?escapeHtml(opts.labelLabel):icon('tag')}</button>`:''}
+            ${opts.enableSignature?`<button class="mini-btn${r.signature?' signed':''}" data-sign="${r.id}" title="${r.signature?'Customer signed — view/update':'Capture customer signature'}" aria-label="Customer signature">${icon('signature')}</button>`:''}
             ${readOnly?'':`<button class="mini-btn" data-edit="${r.id}" title="Edit" aria-label="Edit record">${icon('edit')}</button>
             ${delAllowed?`<button class="mini-btn danger" data-del="${r.id}" title="Delete" aria-label="Delete record">${icon('trash')}</button>`:`<button class="mini-btn danger" disabled title="${opts.canDeleteMsg||'Cannot delete this record'}" aria-label="Delete disabled: ${escapeHtml(opts.canDeleteMsg||'Cannot delete this record')}" style="opacity:.35;cursor:not-allowed">${icon('trash')}</button>`}`}
           </div></td>`:''}</tr>`;
@@ -932,7 +1148,12 @@ function crudPage(container, opts){
       card.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> confirmDelete(b.dataset.del));
     }
     if(opts.viewFn) card.querySelectorAll('[data-view]').forEach(b=> b.onclick = ()=> opts.viewFn(DB[opts.collection].find(x=>x.id===b.dataset.view)));
+    if(opts.labelFn) card.querySelectorAll('[data-label]').forEach(b=> b.onclick = ()=> opts.labelFn(DB[opts.collection].find(x=>x.id===b.dataset.label)));
     if(opts.enableViewDetail) card.querySelectorAll('[data-detail]').forEach(b=> b.onclick = ()=> openDetailView(opts, DB[opts.collection].find(x=>x.id===b.dataset.detail)));
+    if(opts.enableSignature) card.querySelectorAll('[data-sign]').forEach(b=> b.onclick = ()=>{
+      const item = DB[opts.collection].find(x=>x.id===b.dataset.sign);
+      if(item) openSignatureModal(item, opts.itemLabel ? opts.itemLabel(item) : item.id, ()=> updateRows());
+    });
   }
 
   function draw(){
@@ -1244,6 +1465,214 @@ RENDERERS.products = function(c){
   });
 };
 
+/* ---- SUPPLIERS & LEDGER ---- */
+RENDERERS.suppliers = function(c){
+  function draw(){
+    try{
+      // Defensive: guard against any pre-existing/imported data that's missing
+      // these arrays or has malformed rows, so a bad record can't blank the
+      // whole page — sanitize before anything reads from them below.
+      if(!Array.isArray(DB.suppliers)) DB.suppliers = [];
+      if(!Array.isArray(DB.purchases)) DB.purchases = [];
+      DB.suppliers = DB.suppliers.filter(s=>s && s.id);
+      DB.purchases = DB.purchases.filter(p=>p && p.id).map(p=>{ if(!Array.isArray(p.items)) p.items = []; return p; });
+      const payable = totalPayableToSuppliers();
+      const dueCount = purchasesWithBalanceDueCount();
+      c.innerHTML = `
+        <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr)">
+          ${kpiCard('wallet','var(--red)', fmtMoney(payable), 'Total Payable to Suppliers', DB.suppliers.length+' supplier(s)', payable>0?'down':'up')}
+          ${kpiCard('alert','var(--orange)', dueCount, 'Purchases With Balance Due', dueCount>0?'Needs settlement':'All settled', dueCount>0?'down':'up')}
+        </div>
+        <div class="subtabs" id="supplierSubtabs">
+          <button type="button" class="subtab-btn ${suppliersTab==='suppliers'?'active':''}" data-tab="suppliers">${icon('users')} Suppliers</button>
+          <button type="button" class="subtab-btn ${suppliersTab==='ledger'?'active':''}" data-tab="ledger">${icon('file')} Supplier Ledger (Purchases)</button>
+          <button type="button" class="subtab-btn ${suppliersTab==='newpurchase'?'active':''}" data-tab="newpurchase">${icon('cart')} New Purchase (Cart)</button>
+        </div>
+        <div id="supplierTabBody"></div>
+      `;
+      c.querySelectorAll('.subtab-btn').forEach(b=>{ b.onclick = ()=>{ suppliersTab = b.dataset.tab; draw(); }; });
+      const body = c.querySelector('#supplierTabBody');
+      if(suppliersTab==='ledger') renderSupplierLedgerTab(body);
+      else if(suppliersTab==='newpurchase') renderNewPurchaseTab(body);
+      else renderSuppliersListTab(body);
+    }catch(err){
+      console.error('Suppliers & Ledger page failed to render:', err);
+      c.innerHTML = `<div class="empty-state">
+        <div class="icon-wrap">${icon('alert')}</div>
+        <h4>This page didn't load correctly</h4>
+        <p>Please reload the page (Ctrl/Cmd+Shift+R for a hard refresh). If it keeps happening, contact your administrator.</p>
+        <button class="btn btn-outline" onclick="location.reload()">${icon('clock')} Reload Page</button>
+      </div>`;
+    }
+  }
+  draw();
+};
+
+/* ---- Tab: Suppliers directory ---- */
+function renderSuppliersListTab(container){
+  crudPage(container, {
+    collection:'suppliers', title:'Suppliers', singular:'Supplier', prefix:'SUP', newLabel:'Add Supplier', enableExcel:true,
+    searchKeys:['name','company','phone','city'],
+    itemLabel:s=>s.name,
+    columns:[
+      {label:'Name', render:s=>`<div class="name-cell"><div class="avatar-sm">${initials(s.name)}</div><div class="cell-strong">${escapeHtml(s.name)}</div></div>`},
+      {label:'Company', render:s=>escapeHtml(s.company||'—')},
+      {label:'Phone', render:s=>escapeHtml(s.phone||'—')},
+      {label:'City', render:s=>escapeHtml(s.city||'—')},
+      {label:'Contact Person', render:s=>escapeHtml(s.contactPerson||'—')},
+      {label:'Payable', render:s=>{ const bal = supplierPayable(s.id); return `<span class="cell-strong" style="${bal>0?'color:var(--red)':''}">${fmtMoney(bal)}</span>`; }},
+    ],
+    fields:[
+      {key:'name', label:'Supplier Name', full:true},
+      {key:'company', label:'Company Name'},
+      {key:'phone', label:'Phone'},
+      {key:'city', label:'City'},
+      {key:'contactPerson', label:'Contact Person'},
+      {key:'address', label:'Address', full:true},
+      {key:'notes', label:'Notes', type:'textarea', full:true},
+    ],
+    validate:d=> !String(d.name||'').trim() ? 'Supplier name is required' : null,
+    canDelete:s=> !DB.purchases.some(p=>p.supplier===s.id),
+    canDeleteMsg:'Cannot delete a supplier with purchase records — remove their ledger entries first.',
+  });
+}
+
+/* ---- Tab: Supplier Ledger (Purchases) ---- */
+function renderSupplierLedgerTab(container){
+  crudPage(container, {
+    collection:'purchases', title:'Supplier Ledger', singular:'Purchase', prefix:'PUR', newLabel:'Record Purchase', enableExcel:true, enableViewDetail:true,
+    searchKeys:['id'], getSearchVal:(r,k)=> k==='id' ? supplierName(r.supplier)+' '+r.id : r[k],
+    filters:[{key:'status', label:'Status', options:['Paid','Partial','Unpaid']}],
+    itemLabel:p=>supplierName(p.supplier)+' — '+p.id,
+    columns:[
+      {label:'Purchase ID', render:p=>`<span class="cell-mono">${p.id}</span>`},
+      {label:'Supplier', render:p=>`<div class="name-cell"><div class="avatar-sm">${initials(supplierName(p.supplier))}</div><span class="cell-strong">${escapeHtml(supplierName(p.supplier))}</span></div>`},
+      {label:'Items', render:p=>purchaseItemsSummary(p)},
+      {label:'Total', render:p=>`<span class="cell-strong">${fmtMoney(p.total)}</span>`},
+      {label:'Paid', render:p=>`<span class="cell-muted">${fmtMoney(p.paid)}</span>`},
+      {label:'Balance', render:p=>{ const bal = purchaseBalance(p); return `<span class="${bal>0?'cell-strong':'cell-muted'}" style="${bal>0?'color:var(--red)':''}">${fmtMoney(bal)}</span>`; }},
+      {label:'Status', render:p=>statusBadge(p.status)},
+      {label:'Date', render:p=>`<span class="cell-muted">${fmtDate(p.date)}</span>`},
+    ],
+    fields:[
+      {key:'supplier', label:'Supplier Name', type:'combo', matchCollection:'suppliers', placeholder:'Type or select supplier name', options:DB.suppliers.map(x=>({value:x.id,label:x.name}))},
+      {key:'items', label:'Products Purchased', type:'repeater', itemName:'Item', subFields:[
+        {key:'product', label:'Item', type:'select', options:[{value:'',label:'— Select Stock Item —'}].concat(DB.products.map(p=>({value:p.id, label:`${p.name} (current stock: ${p.stock})`})))},
+        {key:'qty', label:'Quantity', type:'number', placeholder:'1'},
+        {key:'cost', label:'Buying Price / Unit (Rs.)', type:'number', placeholder:'0'},
+      ]},
+      {key:'total', label:'Total Bill Amount (Rs.)', type:'number'},
+      {key:'paid', label:'Amount Paid (Rs.)', type:'number', placeholder:'0'},
+      {key:'date', label:'Purchase Date', type:'date', default:todayStr()},
+      {key:'notes', label:'Notes', type:'textarea'},
+    ],
+    validate:d=>{
+      if(!String(d.supplier||'').trim()) return 'Supplier name is required';
+      const items = (d.items||[]).filter(it=>it.product && Number(it.qty)>0);
+      if(!items.length) return 'Add at least one item to this purchase';
+      return null;
+    },
+    afterRender:()=> bindPurchaseLiveTotal(),
+    wideForm:true,
+    onSaved:(purchase, isEdit, prevSnapshot)=>{ reconcilePurchaseStock(purchase, prevSnapshot); purchase.status = purchaseStatus(purchase); },
+    onDelete:(purchase)=>{ restorePurchaseStock(purchase); },
+  });
+}
+
+/* ---- Tab: New Purchase (Cart) ---- */
+function renderNewPurchaseTab(container){
+  let cart = [];
+  function cartTotal(){ return cart.reduce((s,it)=> s + Number(it.qty)*Number(it.cost), 0); }
+  function draw(){
+    const total = cartTotal();
+    container.innerHTML = `
+      <div class="section-head"><div><h2>New Purchase</h2><div class="sub">Add stock items to the cart, then record the bill against a supplier.</div></div></div>
+      <div class="table-card" style="padding:20px">
+        <div class="form-grid">
+          <div class="field"><label>Supplier</label>
+            <input type="text" id="npSupplier" list="npSupplierList" placeholder="Type or select supplier name" autocomplete="off">
+            <datalist id="npSupplierList">${DB.suppliers.map(s=>`<option value="${escapeHtml(s.name)}">`).join('')}</datalist>
+          </div>
+          <div class="field"><label>Purchase Date</label><input type="date" id="npDate" value="${todayStr()}"></div>
+        </div>
+        <div class="cart-add-row" style="margin-top:6px">
+          <div class="field"><label>Stock Item</label><select id="npProduct">
+            <option value="">— Select Stock Item —</option>
+            ${DB.products.map(p=>`<option value="${p.id}" data-cost="${p.cost||0}">${escapeHtml(p.name)} (stock: ${p.stock})</option>`).join('')}
+          </select></div>
+          <div class="field"><label>Quantity</label><input type="number" id="npQty" value="1" min="1"></div>
+          <div class="field"><label>Buying Price / Unit</label><input type="number" id="npCost" placeholder="0"></div>
+          <button class="btn btn-primary" id="npAddBtn" type="button">${icon('plus')} Add to Cart</button>
+        </div>
+        <div style="margin-top:20px">
+          ${cart.length===0 ? `<div class="empty-state"><div class="icon-wrap">${icon('cart')}</div><h4>Cart is empty</h4><p>Add stock items above to start a new purchase.</p></div>` : `
+          <table><thead><tr><th>Item</th><th>Qty</th><th>Buying Price</th><th>Subtotal</th><th></th></tr></thead>
+          <tbody>${cart.map((it,i)=>`<tr>
+            <td class="cell-strong">${escapeHtml(prodName(it.product))}</td>
+            <td>${it.qty}</td><td>${fmtMoney(it.cost)}</td>
+            <td class="cell-strong">${fmtMoney(Number(it.qty)*Number(it.cost))}</td>
+            <td style="text-align:right"><button class="mini-btn danger" data-rm="${i}" title="Remove" aria-label="Remove item">${icon('trash')}</button></td>
+          </tr>`).join('')}</tbody></table>`}
+        </div>
+        ${cart.length>0 ? `
+        <div class="form-grid" style="margin-top:20px;border-top:1px solid var(--border);padding-top:18px">
+          <div class="field"><label>Total Bill Amount</label><input type="text" value="${fmtMoney(total)}" disabled></div>
+          <div class="field"><label>Amount Paid (Rs.)</label><input type="number" id="npPaid" placeholder="0" value="0"></div>
+          <div class="field full"><label>Notes</label><textarea id="npNotes" placeholder="Optional notes about this purchase"></textarea></div>
+        </div>
+        <div class="head-actions" style="justify-content:flex-end;margin-top:14px">
+          <button class="btn btn-outline" id="npClearBtn" type="button">${icon('x')} Clear Cart</button>
+          <button class="btn btn-primary" id="npSaveBtn" type="button">${icon('check')} Save Purchase</button>
+        </div>` : ''}
+      </div>
+    `;
+    const prodSel = container.querySelector('#npProduct');
+    const costInput = container.querySelector('#npCost');
+    if(prodSel) prodSel.onchange = ()=>{
+      const opt = prodSel.selectedOptions[0];
+      if(opt && costInput) costInput.value = opt.dataset.cost || '';
+    };
+    const addBtn = container.querySelector('#npAddBtn');
+    if(addBtn) addBtn.onclick = ()=>{
+      const pid = prodSel.value;
+      const qty = Number(container.querySelector('#npQty').value)||0;
+      const cost = Number(costInput.value)||0;
+      if(!pid){ toast('Select a stock item','error'); return; }
+      if(qty<=0){ toast('Enter a valid quantity','error'); return; }
+      const existing = cart.find(it=>it.product===pid);
+      if(existing){ existing.qty = Number(existing.qty)+qty; existing.cost = cost; }
+      else cart.push({product:pid, qty, cost});
+      draw();
+    };
+    container.querySelectorAll('[data-rm]').forEach(b=>{ b.onclick = ()=>{ cart.splice(+b.dataset.rm,1); draw(); }; });
+    const clearBtn = container.querySelector('#npClearBtn');
+    if(clearBtn) clearBtn.onclick = ()=>{ cart = []; draw(); };
+    const saveBtn = container.querySelector('#npSaveBtn');
+    if(saveBtn) saveBtn.onclick = ()=>{
+      const supplierInput = container.querySelector('#npSupplier');
+      const typed = (supplierInput.value||'').trim();
+      if(!typed){ toast('Supplier name is required','error'); return; }
+      if(!cart.length){ toast('Add at least one item to the cart','error'); return; }
+      let supplier = DB.suppliers.find(s=>s.name.toLowerCase()===typed.toLowerCase());
+      if(!supplier){ supplier = {id:uid('SUP'), name:typed}; DB.suppliers.push(supplier); }
+      const paid = Number(container.querySelector('#npPaid').value)||0;
+      const notes = container.querySelector('#npNotes').value||'';
+      const date = container.querySelector('#npDate').value || todayStr();
+      const purchase = {id:uid('PUR'), supplier:supplier.id, items:cart.map(it=>({product:it.product, qty:Number(it.qty), cost:Number(it.cost)})), total:cartTotal(), paid, date, notes};
+      purchase.status = purchaseStatus(purchase);
+      DB.purchases.push(purchase);
+      reconcilePurchaseStock(purchase, null);
+      log(`Purchase recorded: ${supplier.name} — ${purchase.id}`, 'purchases');
+      save();
+      toast('Purchase recorded successfully');
+      cart = [];
+      suppliersTab = 'ledger';
+      RENDERERS.suppliers(document.getElementById('content'));
+    };
+  }
+  draw();
+}
+
 /* ---- CATEGORIES ---- */
 RENDERERS.categories = function(c){
   crudPage(c, {
@@ -1514,6 +1943,7 @@ function printSaleReceipt(sale){
       </div>
 
       ${invReleaseNotice('Items will not be returned or exchanged/replaced without this invoice.')}
+      ${invSignatureBox(sale)}
 
       <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #E7E5F3;margin-top:10px;padding-top:8px;font-size:7.6px;color:#777">
         <span style="display:flex;align-items:center;gap:4px">${invIcon('mail','#8B2FE0')} ${escapeHtml(DB.settings.email)}</span>
@@ -1522,7 +1952,7 @@ function printSaleReceipt(sale){
         <span style="font-weight:700;color:#B4B4C4;letter-spacing:.4px">SKY NEX • MOBILE REPAIR WORKSHOP &amp; INSTITUTE</span>
       </div>
     </div>`;
-  window.print();
+  printAreaWhenReady();
 }
 function printRepairReceipt(order){
   const cust = DB.customers.find(x=>x.id===order.customer) || {};
@@ -1602,6 +2032,7 @@ function printRepairReceipt(order){
       </div>
 
       ${invReleaseNotice('Phone will not be returned without this invoice.')}
+      ${invSignatureBox(order)}
 
       <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #E7E5F3;margin-top:10px;padding-top:8px;font-size:7.6px;color:#777">
         <span style="display:flex;align-items:center;gap:4px">${invIcon('mail','#8B2FE0')} ${escapeHtml(DB.settings.email)}</span>
@@ -1609,12 +2040,66 @@ function printRepairReceipt(order){
         <span style="display:flex;align-items:center;gap:4px">${invIcon('phone','#8B2FE0')} ${escapeHtml(DB.settings.phone)}</span>
         <span style="font-weight:700;color:#B4B4C4;letter-spacing:.4px">SKY NEX • MOBILE REPAIR WORKSHOP &amp; INSTITUTE</span>
       </div>
+
+      ${deviceStickerBlock(custName(order.customer), order.trackingId)}
     </div>`;
+  printAreaWhenReady();
+}
+// Small "cut here" sticker box printed at the bottom of the repair invoice —
+// Customer Name + Tracking ID only — meant to be cut out and stuck on the
+// device during intake. Prints automatically every time the invoice prints,
+// no extra click needed. Size is set with LABEL_W/LABEL_H below (inches);
+// change those two numbers if the sticker needs to be a different size.
+function deviceStickerBlock(name, trackingId){
+  const LABEL_W = 2, LABEL_H = 1; // sticker size in inches
+  return `
+    <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #B4B4C4">
+      <div style="text-align:center;font-size:7px;color:#999;letter-spacing:.4px;margin-bottom:5px">✂ CUT HERE — DEVICE STICKER</div>
+      <div style="width:${LABEL_W}in;height:${LABEL_H}in;margin:0 auto;box-sizing:border-box;border:1px dashed #B4B4C4;border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4px;overflow:hidden">
+        <div style="font-size:11pt;font-weight:800;color:#1a1a2e;line-height:1.15;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(name||'Walk-in Customer')}</div>
+        <div style="font-size:10pt;font-weight:700;font-family:'Courier New',monospace;letter-spacing:.5px;color:#1a1a2e;margin-top:3px">#${escapeHtml(trackingId||'—')}</div>
+      </div>
+    </div>`;
+}
+// Prints a small sticker label for the physical device — Customer Name +
+// Tracking ID only — meant to be stuck on the device at intake, using a
+// thermal label printer. Separate from the full A5 invoice: it swaps in a
+// temporary @page size (forced landscape, since the label roll is wider
+// than it is tall) just for this one print job, removed again right after,
+// so it doesn't disturb normal invoice printing.
+// To change the label roll size later, just edit LABEL_SIZE_IN below.
+// If the printout ever comes out sideways again, flip ROTATE_LABEL to true.
+function printDeviceLabel(order){
+  const LABEL_SIZE_IN = { width: 2, height: 1 }; // sticker size in inches
+  const ROTATE_LABEL = false; // set true only if the printer still rotates it 90°
+  const name = custName(order.customer) || 'Walk-in Customer';
+  const track = order.trackingId || '—';
+  document.getElementById('printLabelArea').innerHTML = `
+    <div class="label-sheet" style="width:${LABEL_SIZE_IN.width}in;height:${LABEL_SIZE_IN.height}in;${ROTATE_LABEL?'transform:rotate(90deg);':''}">
+      <div class="lbl-name">${escapeHtml(name)}</div>
+      <div class="lbl-track">#${escapeHtml(track)}</div>
+      <div class="lbl-biz">${escapeHtml(DB.settings.businessName||'Sky Nex')}</div>
+    </div>`;
+  const pageStyle = document.createElement('style');
+  pageStyle.id = 'labelPageStyle';
+  // "landscape" is forced explicitly (not just inferred from width>height)
+  // because some printer drivers otherwise default the print job back to
+  // portrait and rotate/squeeze the content to fit, which prints it sideways.
+  pageStyle.textContent = `@page{ size:${LABEL_SIZE_IN.width}in ${LABEL_SIZE_IN.height}in landscape; margin:0; }`;
+  document.head.appendChild(pageStyle);
+  document.body.classList.add('printing-label');
+  const cleanup = ()=>{
+    document.body.classList.remove('printing-label');
+    pageStyle.remove();
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  setTimeout(cleanup, 4000); // safety net in case afterprint never fires
   window.print();
 }
 RENDERERS.sales = function(c){
   crudPage(c, {
-    collection:'sales', title:'Sell Accessories', singular:'Sale', prefix:'SAL', newLabel:'New Sale', enableExcel:true, enableViewDetail:true,
+    collection:'sales', title:'Sell Accessories', singular:'Sale', prefix:'SAL', newLabel:'New Sale', enableExcel:true, enableViewDetail:true, enableSignature:true,
     searchKeys:['id'], getSearchVal:(r,k)=> k==='id' ? custName(r.customer)+' '+r.id+' '+(r.trackingId||'') : r[k],
     filters:[{key:'status', label:'Status', options:DB.lists.invoiceStatuses}],
     itemLabel:s=>custName(s.customer)+' — '+s.id,
@@ -1686,7 +2171,7 @@ function orderDeviceSummary(o){
 }
 RENDERERS.orders = function(c){
   crudPage(c, {
-    collection:'orders', title:'Repair', singular:'Repair Job', prefix:'REP', newLabel:'New Repair', enableExcel:true, enableViewDetail:true,
+    collection:'orders', title:'Repair', singular:'Repair Job', prefix:'REP', newLabel:'New Repair', enableExcel:true, enableViewDetail:true, enableSignature:true,
     searchKeys:['id'], getSearchVal:(r,k)=> k==='id' ? custName(r.customer)+' '+r.id+' '+(r.trackingId||'')+' '+(r.devices||[]).map(d=>d.device).join(' ') : r[k],
     filters:[
       {key:'status', label:'Status', manageKey:'orderstatus', options:DB.lists.orderStatuses},
@@ -1695,6 +2180,7 @@ RENDERERS.orders = function(c){
     statusOrder:['Pending','Processing','Completed','Cancelled'],
     itemLabel:o=>custName(o.customer),
     viewFn:printRepairReceipt, viewLabel:'Print',
+    labelFn:printDeviceLabel, labelLabel:'Sticker',
     columns:[
       {label:'Repair ID', render:o=>`<span class="cell-mono">${o.id}</span>`},
       {label:'Tracking ID', render:o=>trackingCell(o.trackingId)},
@@ -1889,7 +2375,7 @@ function ensureInvoiceForRepair(repair){
 /* ---- INVOICES ---- */
 RENDERERS.invoices = function(c){
   crudPage(c, {
-    collection:'invoices', title:'Invoice', singular:'Invoice', prefix:'INV', newLabel:'New Invoice', enableExcel:true,
+    collection:'invoices', title:'Invoice', singular:'Invoice', prefix:'INV', newLabel:'New Invoice', enableExcel:true, enableSignature:true,
     searchKeys:['id'], getSearchVal:(r)=> custName(r.customer)+' '+r.id+' '+(r.trackingId||''),
     filters:[{key:'status', label:'Status', manageKey:'invoicestatus', options:DB.lists.invoiceStatuses}],
     itemLabel:i=>i.id,
@@ -2043,6 +2529,7 @@ function printInvoice(inv){
       </div>
 
       ${invReleaseNotice(inv.phoneModel==='Accessory Sale' ? 'Items will not be returned or exchanged/replaced without this invoice.' : 'Phone will not be returned without this invoice.')}
+      ${invSignatureBox(inv)}
 
       <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid #E7E5F3;margin-top:10px;padding-top:8px;font-size:7.6px;color:#777">
         <span style="display:flex;align-items:center;gap:4px">${invIcon('mail','#8B2FE0')} ${escapeHtml(DB.settings.email)}</span>
@@ -2051,7 +2538,7 @@ function printInvoice(inv){
         <span style="font-weight:700;color:#B4B4C4;letter-spacing:.4px">SKY NEX • MOBILE REPAIR WORKSHOP &amp; INSTITUTE</span>
       </div>
     </div>`;
-  window.print();
+  printAreaWhenReady();
 }
 
 /* ---- EXPENSES ---- */
@@ -2343,8 +2830,8 @@ RENDERERS.roles = function(c){
 
 
 RENDERERS.history = function(c){
-  const typeIcon = {repair:'tool', invoice:'file', product:'box', order:'cart', sale:'cart', sales:'cart', expense:'wallet', customer:'user', category:'tag', user:'users', general:'info'};
-  const typeColor = {repair:'#FF6A3D', invoice:'#8B2FE0', product:'#2E5EFF', order:'#17B26A', sale:'#17B26A', sales:'#17B26A', expense:'#F5A623', customer:'#0EA5E9', category:'#D946EF', user:'#2E5EFF', general:'#9AA0AE'};
+  const typeIcon = {repair:'tool', invoice:'file', product:'box', order:'cart', sale:'cart', sales:'cart', expense:'wallet', customer:'user', category:'tag', user:'users', signature:'edit', general:'info'};
+  const typeColor = {repair:'#FF6A3D', invoice:'#8B2FE0', product:'#2E5EFF', order:'#17B26A', sale:'#17B26A', sales:'#17B26A', expense:'#F5A623', customer:'#0EA5E9', category:'#D946EF', user:'#2E5EFF', signature:'#17914F', general:'#9AA0AE'};
   c.innerHTML = `
     <div class="section-head"><div><h2>History</h2><div class="sub">${DB.history.length} recorded activities</div></div>
     <div class="head-actions">${isAdmin()?`<button class="btn btn-outline" id="clearHistBtn">${icon('trash')} Clear History</button>`:''}</div></div>

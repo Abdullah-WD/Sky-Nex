@@ -244,6 +244,18 @@ select.tb-filter, .field select, .field input, .field textarea{
 select.tb-filter{color:var(--text-muted);}
 
 .table-card{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow-x:auto; overflow-y:hidden; box-shadow:var(--shadow-sm); -webkit-overflow-scrolling:touch;}
+
+/* ---- Sub-tabs (e.g. Suppliers & Ledger page) ---- */
+.subtabs{display:flex; gap:6px; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; padding:5px; margin-bottom:18px; flex-wrap:wrap;}
+.subtab-btn{display:inline-flex; align-items:center; gap:7px; padding:9px 15px; border-radius:8px; border:none; background:none; font-size:12.8px; font-weight:600; color:var(--text-muted); white-space:nowrap;}
+.subtab-btn .icon{width:15px; height:15px;}
+.subtab-btn:hover{color:var(--text); background:var(--surface-hover);}
+.subtab-btn.active{background:var(--surface); color:var(--blue); box-shadow:var(--shadow-sm);}
+html[data-theme="dark"] .subtab-btn.active{color:#fff; background:var(--grad);}
+
+/* ---- New Purchase cart row ---- */
+.cart-add-row{display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:12px; align-items:end;}
+@media (max-width:760px){ .cart-add-row{grid-template-columns:1fr;} }
 table{width:100%; border-collapse:collapse;}
 thead th{
   text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-faint); font-weight:700;
@@ -260,6 +272,8 @@ tbody tr:hover{background:var(--surface-2);}
 .mini-btn:hover{background:var(--surface-hover); color:var(--text);}
 .mini-btn-text{width:auto; height:30px; padding:0 12px; font-size:12px; font-weight:700;}
 .mini-btn.danger:hover{color:var(--red); border-color:rgba(240,68,56,.3); background:rgba(240,68,56,.06);}
+.mini-btn.signed{color:var(--green); border-color:rgba(23,177,106,.35); background:rgba(23,177,106,.08);}
+.mini-btn.signed:hover{color:var(--green); background:rgba(23,177,106,.14);}
 .avatar-sm{width:32px; height:32px; border-radius:9px; background:var(--grad); color:#fff; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:700; flex-shrink:0;}
 .name-cell{display:flex; align-items:center; gap:10px;}
 
@@ -397,6 +411,24 @@ tbody tr:hover{background:var(--surface-2);}
   .printable{display:block; position:absolute; top:0; left:50%; width:148.5mm; padding:0; margin:0; transform:translateX(-50%);}
   .inv-sheet{width:100%; max-width:148.5mm; box-sizing:border-box; margin:0 auto;}
 }
+
+/* ---- Device sticker label (thermal printer) ----
+   Separate from the A5 invoice print above. Triggered by printDeviceLabel()
+   in app.js, which also injects a temporary @page size matching the label
+   roll (default 2in x 1in) right before printing, then removes it again —
+   so this never affects normal invoice printing. To change the label size
+   later, edit LABEL_SIZE_IN at the top of the printDeviceLabel function
+   in app.js; no CSS change needed. */
+.printable-label{display:none;}
+@media print{
+  body.printing-label .printable{display:none !important;}
+  body.printing-label .printable-label, body.printing-label .printable-label *{visibility:visible; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;}
+  body.printing-label .printable-label{display:block; position:absolute; top:0; left:0; padding:0; margin:0;}
+}
+.label-sheet{box-sizing:border-box; padding:1.5mm 3mm; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-family:'Segoe UI',Arial,Helvetica,sans-serif; overflow:hidden; transform-origin:center center;}
+.label-sheet .lbl-name{font-size:11pt; font-weight:800; color:#000; line-height:1.2; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.label-sheet .lbl-track{font-size:10.5pt; font-weight:700; font-family:'Courier New',monospace; letter-spacing:.5px; color:#000; margin-top:2mm;}
+.label-sheet .lbl-biz{font-size:6.5pt; color:#444; margin-top:1.5mm; letter-spacing:.3px; text-transform:uppercase;}
 .tracking-chip{
   display:inline-block; font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700;
   letter-spacing:.4px; color:#8B2FE0; background:rgba(139,47,224,.1); padding:3px 9px; border-radius:6px;
