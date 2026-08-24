@@ -65,7 +65,7 @@ const NAV = [
   ]},
   {group:'Purchasing', items:[
     {id:'suppliers', label:'Suppliers', icon:'truck'},
-    {id:'ledger', label:'Ledger', icon:'file'},
+    {id:'ledger', label:'Supplier Ledger', icon:'file'},
   ]},
   {group:'Sales', items:[
     {id:'sales', label:'Sell Accessories', icon:'cart'},
@@ -102,7 +102,7 @@ const PAGE_META = {
   categories:['Categories','Organize stock items and repair types into groups.'],
   lowstock:['Low Stock','Items that have fallen below their reorder threshold.'],
   suppliers:['Suppliers','Manage your supplier directory and contact details.'],
-  ledger:['Ledger','Record purchases against a supplier, track payments and outstanding payables.'],
+  ledger:['Supplier Ledger','Record purchases against a supplier, track payments and outstanding payables.'],
   shops:['Shops','Manage your shopkeeper directory and contact details.'],
   shopledger:['Shop Ledger','Record items/services given to a shopkeeper, track payments and outstanding receivables.'],
   sales:['Sell Accessories','Sell stock items & accessories directly to a walk-in or existing customer.'],
