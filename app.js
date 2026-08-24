@@ -390,9 +390,10 @@ function supplierPayable(id){
   return DB.purchases.filter(p=>p.supplier===id).reduce((sum,p)=> sum + purchaseBalance(p), 0) + opening;
 }
 function purchaseItemsSummary(p){
-  const list = (p.items||[]).filter(it=>it.product);
+  const list = (p.items||[]).filter(it=>it.product || it.label);
   if(!list.length) return '—';
-  const first = `${prodName(list[0].product)} × ${Number(list[0].qty)||0}`;
+  const nameOf = it=> it.product ? prodName(it.product) : (it.label||'Service');
+  const first = `${nameOf(list[0])} × ${Number(list[0].qty)||0}`;
   return list.length===1 ? escapeHtml(first) : `${escapeHtml(first)} <span class="cell-muted">+${list.length-1} more</span>`;
 }
 function purchaseComputedTotal(items){
@@ -562,6 +563,66 @@ function bindShopSaleLiveTotal(){
   recalc();
 }
 function activeRepairs(){ return DB.orders.filter(o=>o.status!=='Completed' && o.status!=='Cancelled'); }
+// Live-updates the Repair form's Estimated Cost Total as Parts Used / Service
+// Charges rows change: sums (qty × price) from Parts Used plus each Service
+// Charge amount. Auto-fills a part's Price from the product's sale price
+// when picked. Mirrors bindPurchaseLiveTotal/bindShopSaleLiveTotal, but
+// combines two repeaters (parts + service charges) into one total.
+function bindOrderLiveTotal(){
+  const partsList = document.getElementById('f_partsUsed_list');
+  const chargesList = document.getElementById('f_serviceCharges_list');
+  const totalEl = document.getElementById('f_total');
+  if(!totalEl || (!partsList && !chargesList)) return;
+  function recalc(){
+    let sum = 0;
+    if(partsList) Array.from(partsList.children).forEach(b=>{
+      const qty = Number((b.querySelector('[data-key="qty"]')||{}).value||0);
+      const price = Number((b.querySelector('[data-key="price"]')||{}).value||0);
+      sum += qty*price;
+    });
+    if(chargesList) Array.from(chargesList.children).forEach(b=>{
+      sum += Number((b.querySelector('[data-key="amount"]')||{}).value||0);
+    });
+    totalEl.value = sum;
+  }
+  function bindPartRow(block){
+    const prodSel = block.querySelector('[data-key="product"]');
+    const priceInput = block.querySelector('[data-key="price"]');
+    const qtyInput = block.querySelector('[data-key="qty"]');
+    if(prodSel) prodSel.addEventListener('change', ()=>{
+      const prod = DB.products.find(p=>p.id===prodSel.value);
+      if(prod && priceInput && !priceInput.value) priceInput.value = prod.price;
+      recalc();
+    });
+    if(priceInput) priceInput.addEventListener('input', recalc);
+    if(qtyInput) qtyInput.addEventListener('input', recalc);
+  }
+  function bindChargeRow(block){
+    const amountInput = block.querySelector('[data-key="amount"]');
+    if(amountInput) amountInput.addEventListener('input', recalc);
+  }
+  if(partsList){
+    Array.from(partsList.children).forEach(bindPartRow);
+    const partsAddBtn = document.getElementById('f_partsUsed_addbtn');
+    if(partsAddBtn) partsAddBtn.addEventListener('click', ()=> setTimeout(()=>{
+      const last = partsList.children[partsList.children.length-1];
+      if(last) bindPartRow(last);
+      recalc();
+    }, 0));
+    partsList.querySelectorAll('.device-remove').forEach(btn=> btn.addEventListener('click', ()=> setTimeout(recalc, 0)));
+  }
+  if(chargesList){
+    Array.from(chargesList.children).forEach(bindChargeRow);
+    const chargesAddBtn = document.getElementById('f_serviceCharges_addbtn');
+    if(chargesAddBtn) chargesAddBtn.addEventListener('click', ()=> setTimeout(()=>{
+      const last = chargesList.children[chargesList.children.length-1];
+      if(last) bindChargeRow(last);
+      recalc();
+    }, 0));
+    chargesList.querySelectorAll('.device-remove').forEach(btn=> btn.addEventListener('click', ()=> setTimeout(recalc, 0)));
+  }
+  recalc();
+}
 
 /* ---------- Router ---------- */
 let currentRoute = 'dashboard';
@@ -1716,7 +1777,8 @@ function renderSupplierLedgerTab(container){
       {key:'supplier', label:'Supplier Name', type:'combo', matchCollection:'suppliers', placeholder:'Type or select supplier name', options:DB.suppliers.map(x=>({value:x.id,label:x.name}))},
       {key:'invoiceNo', label:'Invoice / Bill # (optional)', placeholder:'e.g. INV-2451'},
       {key:'items', label:'Products Purchased', type:'repeater', itemName:'Item', subFields:[
-        {key:'product', label:'Item', type:'select', options:[{value:'',label:'— Select Stock Item —'}].concat(DB.products.map(p=>({value:p.id, label:`${p.name} (current stock: ${p.stock})`})))},
+        {key:'product', label:'Stock Item (leave blank for a service/custom charge)', type:'select', options:[{value:'',label:'— Service / Custom Charge —'}].concat(DB.products.map(p=>({value:p.id, label:`${p.name} (current stock: ${p.stock})`})))},
+        {key:'label', label:'Description (for a service/custom charge)', placeholder:'e.g. Delivery / freight charge'},
         {key:'qty', label:'Quantity', type:'number', placeholder:'1'},
         {key:'cost', label:'Buying Price / Unit (Rs.)', type:'number', placeholder:'0'},
       ]},
@@ -1729,8 +1791,8 @@ function renderSupplierLedgerTab(container){
     ],
     validate:d=>{
       if(!String(d.supplier||'').trim()) return 'Supplier name is required';
-      const items = (d.items||[]).filter(it=>it.product && Number(it.qty)>0);
-      if(!items.length) return 'Add at least one item to this purchase';
+      const items = (d.items||[]).filter(it=>(it.product || String(it.label||'').trim()) && Number(it.qty)>0);
+      if(!items.length) return 'Add at least one item or service/custom charge to this purchase';
       return null;
     },
     afterRender:()=> bindPurchaseLiveTotal(),
@@ -1766,11 +1828,17 @@ function renderNewPurchaseTab(container){
           <div class="field"><label>Buying Price / Unit</label><input type="number" id="npCost" placeholder="0"></div>
           <button class="btn btn-primary" id="npAddBtn" type="button">${icon('plus')} Add to Cart</button>
         </div>
+        <div class="cart-add-row" style="margin-top:10px">
+          <div class="field"><label>Service / Custom Charge</label><input type="text" id="npServiceLabel" placeholder="e.g. Delivery / freight charge"></div>
+          <div class="field"><label>Quantity</label><input type="number" id="npServiceQty" value="1" min="1"></div>
+          <div class="field"><label>Price</label><input type="number" id="npServicePrice" placeholder="0"></div>
+          <button class="btn btn-outline" id="npAddServiceBtn" type="button">${icon('plus')} Add Charge</button>
+        </div>
         <div style="margin-top:20px">
-          ${cart.length===0 ? `<div class="empty-state"><div class="icon-wrap">${icon('cart')}</div><h4>Cart is empty</h4><p>Add stock items above to start a new purchase.</p></div>` : `
-          <table><thead><tr><th>Item</th><th>Qty</th><th>Buying Price</th><th>Subtotal</th><th></th></tr></thead>
+          ${cart.length===0 ? `<div class="empty-state"><div class="icon-wrap">${icon('cart')}</div><h4>Cart is empty</h4><p>Add stock items or services/charges above to start a new purchase.</p></div>` : `
+          <table><thead><tr><th>Item / Service</th><th>Qty</th><th>Buying Price</th><th>Subtotal</th><th></th></tr></thead>
           <tbody>${cart.map((it,i)=>`<tr>
-            <td class="cell-strong">${escapeHtml(prodName(it.product))}</td>
+            <td class="cell-strong">${escapeHtml(it.product ? prodName(it.product) : (it.label||'Service'))}</td>
             <td>${it.qty}</td><td>${fmtMoney(it.cost)}</td>
             <td class="cell-strong">${fmtMoney(Number(it.qty)*Number(it.cost))}</td>
             <td style="text-align:right"><button class="mini-btn danger" data-rm="${i}" title="Remove" aria-label="Remove item">${icon('trash')}</button></td>
@@ -1808,6 +1876,16 @@ function renderNewPurchaseTab(container){
       else cart.push({product:pid, qty, cost});
       draw();
     };
+    const addServiceBtn = container.querySelector('#npAddServiceBtn');
+    if(addServiceBtn) addServiceBtn.onclick = ()=>{
+      const label = (container.querySelector('#npServiceLabel').value||'').trim();
+      const qty = Number(container.querySelector('#npServiceQty').value)||0;
+      const cost = Number(container.querySelector('#npServicePrice').value)||0;
+      if(!label){ toast('Enter a description for the service/charge','error'); return; }
+      if(qty<=0){ toast('Enter a valid quantity','error'); return; }
+      cart.push({product:'', label, qty, cost});
+      draw();
+    };
     container.querySelectorAll('[data-rm]').forEach(b=>{ b.onclick = ()=>{ cart.splice(+b.dataset.rm,1); draw(); }; });
     const clearBtn = container.querySelector('#npClearBtn');
     if(clearBtn) clearBtn.onclick = ()=>{ cart = []; draw(); };
@@ -1825,7 +1903,7 @@ function renderNewPurchaseTab(container){
       const invoiceNo = container.querySelector('#npInvoiceNo').value||'';
       const dueDate = container.querySelector('#npDueDate').value||'';
       const paymentMethod = container.querySelector('#npPaymentMethod').value||'';
-      const purchase = {id:uid('PUR'), supplier:supplier.id, invoiceNo, items:cart.map(it=>({product:it.product, qty:Number(it.qty), cost:Number(it.cost)})), total:cartTotal(), paid, paymentMethod, date, dueDate, notes};
+      const purchase = {id:uid('PUR'), supplier:supplier.id, invoiceNo, items:cart.map(it=>({product:it.product||'', label:it.label||'', qty:Number(it.qty), cost:Number(it.cost)})), total:cartTotal(), paid, paymentMethod, date, dueDate, notes};
       purchase.status = purchaseStatus(purchase);
       DB.purchases.push(purchase);
       reconcilePurchaseStock(purchase, null);
@@ -2634,6 +2712,11 @@ RENDERERS.orders = function(c){
       {key:'partsUsed', label:'Parts Used (Stock Items)', type:'repeater', itemName:'Part', subFields:[
         {key:'product', label:'Stock Item', type:'select', options:[{value:'',label:'— Select Stock Item —'}].concat(DB.products.map(p=>({value:p.id, label:`${p.name} (${p.stock} in stock)`})))},
         {key:'qty', label:'Quantity Used', type:'number', placeholder:'1'},
+        {key:'price', label:'Price Charged / Unit (Rs.)', type:'number', placeholder:'0'},
+      ]},
+      {key:'serviceCharges', label:'Service Charges (Labor, Diagnostic Fee, etc.)', type:'repeater', itemName:'Charge', subFields:[
+        {key:'label', label:'Description', placeholder:'e.g. Labor / Service Charge'},
+        {key:'amount', label:'Amount (Rs.)', type:'number', placeholder:'0'},
       ]},
       {key:'total', label:'Estimated Cost — Total (Rs.)', type:'number'},
       {key:'advance', label:'Advance Payment (Rs.)', type:'number'},
@@ -2651,7 +2734,7 @@ RENDERERS.orders = function(c){
       if(!d.devices || !d.devices.some(dv=>dv.device && dv.device.trim())) return 'At least one device is required';
       return null;
     },
-    afterRender:()=>{ bindPhoneMask('f_customerPhone'); updateRepairChecklistVisibility(); },
+    afterRender:()=>{ bindPhoneMask('f_customerPhone'); updateRepairChecklistVisibility(); bindOrderLiveTotal(); },
     wideForm:true,
     onCreateExtra:()=>({trackingId: genTrackingId('REP')}),
     onSaved:(order, isEdit, prevSnapshot)=>{ ensureInvoiceForOrder(order); reconcilePartsStock(order, prevSnapshot?prevSnapshot.status:null); },
